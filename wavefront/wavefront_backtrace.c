@@ -529,7 +529,7 @@ void wavefront_backtrace_affine(
 }
 
 /**
- * Tests whether mwavefront[k - 1] contains an offset coherent with the chain of
+ * Tests whether mwavefront[k] contains an offset coherent with the chain of
  * insertions that we are following. In case it does, we have found a path
  * back to M. If a path back to M is found, updates the cigar with the
  * insertions between the current positions and the original position in the M
@@ -539,7 +539,7 @@ void wavefront_backtrace_affine(
  * @param cigar The cigar.
  * @param mwavefront A wavefront in the M matrix.
  * @param k The diagonal of the current cell. We are going to access
- * mwavefront[k - 1].
+ * mwavefront[k].
  * @param v_lo The lowest allowed v coordinate so the path is considered valid
  * (inclusive).
  * @param v_hi The highest allowed v coordinate so the path is considered valid
@@ -558,13 +558,13 @@ static bool backtrace_ins_m_only(cigar_t* const cigar,
                                  int* const v,
                                  int* const h) {
 
-  if (mwavefront == NULL || mwavefront->lo > k - 1 || k - 1 > mwavefront->hi) {
+  if (mwavefront == NULL || mwavefront->lo > k || k > mwavefront->hi) {
     return false;
   }
 
-  const int new_offset = mwavefront->offsets[k - 1];
-  const int new_v = WAVEFRONT_V(k - 1, new_offset);
-  const int new_h = WAVEFRONT_H(k - 1, new_offset);
+  const int new_offset = mwavefront->offsets[k];
+  const int new_v = WAVEFRONT_V(k, new_offset);
+  const int new_h = WAVEFRONT_H(k, new_offset);
 
   if (new_v < v_lo || new_v > v_hi) {
     return false;
@@ -588,7 +588,7 @@ static bool backtrace_ins_m_only(cigar_t* const cigar,
 }
 
 /**
- * Tests whether mwavefront[k + 1] contains an offset coherent with the chain of
+ * Tests whether mwavefront[k] contains an offset coherent with the chain of
  * deletions that we are following. In case it does, we have found a path
  * back to M. If a path back to M is found, updates the cigar with the
  * deletions between the current positions and the original position in the M
@@ -598,7 +598,7 @@ static bool backtrace_ins_m_only(cigar_t* const cigar,
  * @param cigar The cigar.
  * @param mwavefront A wavefront in the M matrix.
  * @param k The diagonal of the current cell. We are going to access
- * mwavefront[k + 1].
+ * mwavefront[k].
  * @param h_lo The lowest allowed h coordinate so the path is considered valid
  * (inclusive).
  * @param h_hi The highest allowed h coordinate so the path is considered valid
@@ -617,13 +617,13 @@ static bool backtrace_del_m_only(cigar_t* const cigar,
                                  int* const v,
                                  int* const h) {
 
-  if (mwavefront == NULL || mwavefront->lo > k + 1 || k + 1 > mwavefront->hi) {
+  if (mwavefront == NULL || mwavefront->lo > k || k > mwavefront->hi) {
     return false;
   }
 
-  const int new_offset = mwavefront->offsets[k + 1];
-  const int new_v = WAVEFRONT_V(k + 1, new_offset);
-  const int new_h = WAVEFRONT_H(k + 1, new_offset);
+  const int new_offset = mwavefront->offsets[k];
+  const int new_v = WAVEFRONT_V(k, new_offset);
+  const int new_h = WAVEFRONT_H(k, new_offset);
 
   if (new_h < h_lo || new_h > h_hi) {
     return false;
@@ -795,18 +795,10 @@ void wavefront_backtrace_affine_m_only(
   int v = WAVEFRONT_V(alignment_k,alignment_offset);
 
   // Variables for searching paths back to M from I1, D1, I2 and D2.
-  int k_ins = -1; // I1, I2.
-  int k_del = -1; // D1, D2.
-
-  int score1 = -1; // I1, D1.
-  int score2 = -1; // I2, D2.
-
-  // I1, I2.
-  int v_lo = -1;
-  int v_hi = -1;
-  // D1, D2.
-  int h_lo = -1;
-  int h_hi = -1;
+  int k = -1;
+  int nindels = -1;
+  int init_v = -1;
+  int init_h = -1;
 
   // Account for ending insertions/deletions
   if (component_end == affine2p_matrix_M) { // ends-free
@@ -824,8 +816,8 @@ void wavefront_backtrace_affine_m_only(
   while (v > 0 || h > 0) {
     if (in_mmatrix) {
       // Extend (find matches in the diagonal) backwards.
-      int init_v = v;
-      int init_h = h;
+      init_v = v;
+      init_h = h;
 
       const char* const pattern = wf_aligner->sequences.pattern;
       const char* const text = wf_aligner->sequences.text;
@@ -845,7 +837,7 @@ void wavefront_backtrace_affine_m_only(
         wf_aligner->wf_components.mwavefronts[mismatch]
         : NULL;
 
-      const int k = DPMATRIX_DIAGONAL(h,v);
+      k = DPMATRIX_DIAGONAL(h,v); // Update k.
       const int offset = DPMATRIX_OFFSET(h,v);
 
       //  If we come from a mismatch, then the backwards extend is correct.
@@ -881,96 +873,45 @@ void wavefront_backtrace_affine_m_only(
         //
         in_mmatrix = false;
 
-        h_lo = h;
-        h_hi = init_h;
-
-        v_lo = v;
-        v_hi = init_v;
-
-        k_ins = k;
-        k_del = k;
-
-        score1 = score;
-        score2 = score;
+        nindels = 0;
       }
     } else {
       // We are searching a path back to M in I1, D1, I2 and D2.
       // Any path that leads to M is valid.
+      ++nindels;
 
-      // --- Follow the ins1 path ---
-      {
-        const int ins1 = score1 - penalties->gap_opening1 - penalties->gap_extension1;
-        const wavefront_t* const mwavefront = (ins1 >= 0) ?
-          wf_aligner->wf_components.mwavefronts[ins1]
-          : NULL;
+      const int k_ins = k - nindels;
+      const int k_del = k + nindels;
 
-        const bool path_found = backtrace_ins_m_only(cigar, mwavefront, k_ins,
-                                                     v_lo, v_hi, &v, &h);
+      const int indel1 = score - penalties->gap_opening1 -
+                         nindels * penalties->gap_extension1;
+      const wavefront_t* const mwavefront1 = (indel1 >= 0) ?
+        wf_aligner->wf_components.mwavefronts[indel1] : NULL;
 
-        if (path_found) {
-          score = ins1;
-          in_mmatrix = true;
-          continue;
-        }
+      // I1 and D1 paths.
+      if (backtrace_ins_m_only(cigar, mwavefront1, k_ins, v, init_v, &v, &h) ||
+          backtrace_del_m_only(cigar, mwavefront1, k_del, h, init_h, &v, &h)) {
+        score = indel1;
+        in_mmatrix = true;
+        continue;
       }
 
-      // --- Follow the del1 path ---
-      {
-        const int del1 = score1 - penalties->gap_opening1 - penalties->gap_extension1;
-        const wavefront_t* const mwavefront = (del1 >= 0) ?
-          wf_aligner->wf_components.mwavefronts[del1]
-          : NULL;
-
-        const bool path_found = backtrace_del_m_only(cigar, mwavefront, k_del,
-                                                     h_lo, h_hi, &v, &h);
-        if (path_found) {
-          score = del1;
-          in_mmatrix = true;
-          continue;
-        }
+      if (distance_metric != gap_affine_2p) {
+        continue;
       }
 
-      if (distance_metric == gap_affine_2p) {
-        // --- Follow the ins2 path ---
-        {
-          const int ins2 = score2 - penalties->gap_opening2 - penalties->gap_extension2;
-          const wavefront_t* const mwavefront = (ins2 >= 0) ?
-            wf_aligner->wf_components.mwavefronts[ins2]
-            : NULL;
+      const int indel2 = score - penalties->gap_opening2 -
+                         nindels * penalties->gap_extension2; 
+      const wavefront_t* const mwavefront2 = (indel2 >= 0) ?
+        wf_aligner->wf_components.mwavefronts[indel2] : NULL;
 
-          const bool path_found = backtrace_ins_m_only(cigar, mwavefront, k_ins,
-                                                       v_lo, v_hi, &v, &h);
-
-          if (path_found) {
-            score = ins2;
-            in_mmatrix = true;
-            continue;
-          }
-        }
-
-        // --- Follow the del2 path ---
-        {
-          const int del2 = score2 - penalties->gap_opening2 - penalties->gap_extension2;
-          const wavefront_t* const mwavefront = (del2 >= 0) ?
-            wf_aligner->wf_components.mwavefronts[del2]
-            : NULL;
-
-          const bool path_found = backtrace_del_m_only(cigar, mwavefront, k_del,
-                                                       h_lo, h_hi, &v, &h);
-
-          if (path_found) {
-            score = del2;
-            in_mmatrix = true;
-            continue;
-          }
-        }
+      // I2 and D2 paths.
+      if (backtrace_ins_m_only(cigar, mwavefront2, k_ins, v, init_v, &v, &h) ||
+          backtrace_del_m_only(cigar, mwavefront2, k_del, h, init_h, &v, &h)) {
+        score = indel2;
+        in_mmatrix = true;
+        continue;
       }
-
-      // Keep exploring I1, I2, D1 and D2.
-      --k_ins;
-      ++k_del;
-      score1 -= penalties->gap_extension1;
-      score2 -= penalties->gap_extension2;
     }
   }
 
