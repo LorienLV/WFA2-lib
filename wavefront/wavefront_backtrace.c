@@ -666,84 +666,84 @@ check_cigar_backtrace_affine_m_only(const wavefront_penalties_t* const penalties
                                     const int expected_score,
                                     const bool affine2p) {
 
-    const char* const pattern = sequences->pattern;
-    const char* const text = sequences->text;
+  const char* const pattern = sequences->pattern;
+  const char* const text = sequences->text;
 
-    int score = 0;
-    int score2 = 0;   // For Dual affine.
+  int score = 0;
+  int score2 = 0;   // For Dual affine.
 
-    int v = 0;
-    int h = 0;
+  int v = 0;
+  int h = 0;
 
-    char prev_op = ' ';
+  char prev_op = ' ';
 
-    for (int i = cigar->begin_offset; i < cigar->end_offset; ++i) {
-      const char op = cigar->operations[i];
+  for (int i = cigar->begin_offset; i < cigar->end_offset; ++i) {
+    const char op = cigar->operations[i];
 
-      if ((prev_op == 'I' || prev_op == 'D') && op != prev_op && affine2p) {
-        // We have finished a chain of gaps, get the best score.
-        score = MIN(score, score2);
-      }
-
-      if (op == 'M') {
-        if (pattern[v] != text[h]) {
-          return false;
-        }
-
-        score += penalties->match;
-
-        ++v;
-        ++h;
-      }
-      else if (op == 'X') {
-        if (pattern[v] == text[h]) {
-          return false;
-        }
-
-        score += penalties->mismatch;
-
-        ++v;
-        ++h;
-      }
-      else if (op == 'I') {
-        if (prev_op != 'I') {
-          score2 = score + penalties->gap_opening2;
-          score += penalties->gap_opening1;
-        }
-
-        score += penalties->gap_extension1;
-        score2 += penalties->gap_extension2;
-
-        ++h;
-      }
-      else if (op == 'D') {
-        if (prev_op != 'D') {
-          score2 = score + penalties->gap_opening2;
-          score += penalties->gap_opening1;
-        }
-
-        score += penalties->gap_extension1;
-        score2 += penalties->gap_extension2;
-
-        ++v;
-      }
-      else {
-        return false;
-      }
-
-      prev_op = op;
-    }
-
-    // In case the sequence ends with a gap.
-    if ((prev_op == 'I' || prev_op == 'D') && affine2p) {
+    if ((prev_op == 'I' || prev_op == 'D') && op != prev_op && affine2p) {
+      // We have finished a chain of gaps, get the best score.
       score = MIN(score, score2);
     }
 
-    if (score != expected_score) {
+    if (op == 'M') {
+      if (pattern[v] != text[h]) {
+        return false;
+      }
+
+      score += penalties->match;
+
+      ++v;
+      ++h;
+    }
+    else if (op == 'X') {
+      if (pattern[v] == text[h]) {
+        return false;
+      }
+
+      score += penalties->mismatch;
+
+      ++v;
+      ++h;
+    }
+    else if (op == 'I') {
+      if (prev_op != 'I') {
+        score2 = score + penalties->gap_opening2;
+        score += penalties->gap_opening1;
+      }
+
+      score += penalties->gap_extension1;
+      score2 += penalties->gap_extension2;
+
+      ++h;
+    }
+    else if (op == 'D') {
+      if (prev_op != 'D') {
+        score2 = score + penalties->gap_opening2;
+        score += penalties->gap_opening1;
+      }
+
+      score += penalties->gap_extension1;
+      score2 += penalties->gap_extension2;
+
+      ++v;
+    }
+    else {
       return false;
     }
 
-    return true;
+    prev_op = op;
+  }
+
+  // In case the sequence ends with a gap.
+  if ((prev_op == 'I' || prev_op == 'D') && affine2p) {
+    score = MIN(score, score2);
+  }
+
+  if (score != expected_score) {
+    return false;
+  }
+
+  return true;
 }
 
 #endif
@@ -860,38 +860,38 @@ void wavefront_backtrace_affine_m_only(
 
         cigar->operations[(cigar->begin_offset)--] = 'X';
       } else {
-          // Otherwise, we come from either I1, D2, I2 or D2.
-          // Freeze v and h and start searching a path back to M.
+        // Otherwise, we come from either I1, D2, I2 or D2.
+        // Freeze v and h and start searching a path back to M.
 
-          // In WFA, for a given diagonal and score, we only store the furthest
-          // reaching offset. We do not know which was the offset prior to
-          // extending it. To account for that, we must allow the indel to come
-          // at any point between the offset previos performing the backwards
-          // extension and the current offset. We store the range of allowed v
-          // and h coordinates.
-          //
-          // Example, in the following DP table, where there is a chain of 3
-          // matches an insertion can come from any of the positions marked with
-          // '>'.
-          //
-          //      A  A  A
-          //  A > M
-          //  A    > M
-          //  A       > M
-          //
-          in_mmatrix = false;
+        // In WFA, for a given diagonal and score, we only store the furthest
+        // reaching offset. We do not know which was the offset prior to
+        // extending it. To account for that, we must allow the indel to come
+        // at any point between the offset previos performing the backwards
+        // extension and the current offset. We store the range of allowed v
+        // and h coordinates.
+        //
+        // Example, in the following DP table, where there is a chain of 3
+        // matches an insertion can come from any of the positions marked with
+        // '>'.
+        //
+        //      A  A  A
+        //  A > M
+        //  A    > M
+        //  A       > M
+        //
+        in_mmatrix = false;
 
-          h_lo = h;
-          h_hi = init_h;
+        h_lo = h;
+        h_hi = init_h;
 
-          v_lo = v;
-          v_hi = init_v;
+        v_lo = v;
+        v_hi = init_v;
 
-          k_ins = k;
-          k_del = k;
+        k_ins = k;
+        k_del = k;
 
-          score1 = score;
-          score2 = score;
+        score1 = score;
+        score2 = score;
       }
     } else {
       // We are searching a path back to M in I1, D1, I2 and D2.
