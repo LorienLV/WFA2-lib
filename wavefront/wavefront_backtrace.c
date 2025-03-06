@@ -756,9 +756,6 @@ check_cigar_backtrace_affine_m_only(const wavefront_penalties_t* const penalties
  * small scope).
  *
  * @param wf_aligner The wavefront aligner.
- * @param component_begin The matrix where the alignment starts. Unused.
- * @param component_end The matrix where the alignment ends. We assume is the M
- * matrix. Unused.
  * @param alignment_score The score of the alignment.
  * @param alignment_k The diagonal that contains the cell (N, M), where the
  * backtracking starts.
@@ -767,8 +764,6 @@ check_cigar_backtrace_affine_m_only(const wavefront_penalties_t* const penalties
  */
 void wavefront_backtrace_affine_m_only(
     wavefront_aligner_t* const wf_aligner,
-    const affine2p_matrix_type component_begin,
-    const affine2p_matrix_type component_end,
     const int alignment_score,
     const int alignment_k,
     const wf_offset_t alignment_offset) {
@@ -786,9 +781,7 @@ void wavefront_backtrace_affine_m_only(
   cigar->begin_offset = cigar->max_operations - 2;
   cigar->operations[cigar->end_offset] = '\0';
 
-  // TODO: Be sure that this is correct.
   bool in_mmatrix = true; // In this function, we always start in the M matrix.
-  assert(component_end == affine2p_matrix_M);
 
   int score = alignment_score;
   int h = WAVEFRONT_H(alignment_k,alignment_offset);
@@ -801,15 +794,13 @@ void wavefront_backtrace_affine_m_only(
   int init_h = -1;
 
   // Account for ending insertions/deletions
-  if (component_end == affine2p_matrix_M) { // ends-free
-    if (v < pattern_length) {
-      int i = pattern_length - v;
-      while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'D'; --i;};
-    }
-    if (h < text_length) {
-      int i = text_length - h;
-      while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'I'; --i;};
-    }
+  if (v < pattern_length) {
+    int i = pattern_length - v;
+    while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'D'; --i;};
+  }
+  if (h < text_length) {
+    int i = text_length - h;
+    while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'I'; --i;};
   }
 
   // Trace the alignment back

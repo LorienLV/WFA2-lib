@@ -439,6 +439,39 @@ void wavefront_compute_allocate_output(
     score_mod = score % wf_components->max_score_scope;
     wavefront_compute_free_output(wf_aligner,score_mod);
   }
+  else {
+    // We free I1, D1, I2, D2 wavefronts that will never be accessed again.
+    // The traceback must be performed using the information in M only.
+    // TODO: This is a temporary solution. Do this well.
+    wavefront_components_t* const wf_components = &wf_aligner->wf_components;
+    const distance_metric_t distance_metric = wf_aligner->penalties.distance_metric;
+    wavefront_slab_t* const wavefront_slab = wf_aligner->wavefront_slab;
+
+    if (distance_metric == gap_affine || distance_metric == gap_affine_2p) {
+      const int score_indel1 = score - 2 * wf_aligner->penalties.gap_extension1;
+      if (score_indel1 >= 0 && wf_components->i1wavefronts[score_indel1]) {
+        wavefront_slab_free(wavefront_slab,wf_components->i1wavefronts[score_indel1]);
+        wf_components->i1wavefronts[score_indel1] = NULL;
+      }
+      if (score_indel1 >= 0 && wf_components->d1wavefronts[score_indel1]) {
+        wavefront_slab_free(wavefront_slab,wf_components->d1wavefronts[score_indel1]);
+        wf_components->d1wavefronts[score_indel1] = NULL;
+      }
+    }
+
+    if (distance_metric == gap_affine_2p) {
+      const int score_indel2 = score - 2 * wf_aligner->penalties.gap_extension2;
+      if (score_indel2 >= 0 && wf_components->i2wavefronts[score_indel2]) {
+        wavefront_slab_free(wavefront_slab,wf_components->i2wavefronts[score_indel2]);
+        wf_components->i2wavefronts[score_indel2] = NULL;
+      }
+      if (score_indel2 >= 0 && wf_components->d2wavefronts[score_indel2]) {
+        wavefront_slab_free(wavefront_slab,wf_components->d2wavefronts[score_indel2]);
+        wf_components->d2wavefronts[score_indel2] = NULL;
+      }
+    }
+  }
+
   // Check
   if (score_mod >= wf_components->num_wavefronts) {
     fprintf(stderr,"[WFA::Compute] Maximum allocated wavefronts reached\n");
