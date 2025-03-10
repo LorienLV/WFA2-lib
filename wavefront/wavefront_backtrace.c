@@ -774,6 +774,10 @@ void wavefront_backtrace_affine_m_only(
   const int text_length = sequences->text_length;
   const wavefront_penalties_t* const penalties = &wf_aligner->penalties;
   const distance_metric_t distance_metric = penalties->distance_metric;
+  // TODO: Do this elsewhere.
+  // We need padding in order to perform the backwards extend.
+  sequences->pattern[-1] = '!';
+  sequences->text[-1] = '?';
   // Prepare cigar
   cigar_t* const cigar = wf_aligner->cigar;
   cigar_clear(cigar);
@@ -790,8 +794,7 @@ void wavefront_backtrace_affine_m_only(
   // Variables for searching paths back to M from I1, D1, I2 and D2.
   int k = -1;
   int nindels = -1;
-  int init_v = -1;
-  int init_h = -1;
+  int nmatches = -1;
 
   // Account for ending insertions/deletions
   if (v < pattern_length) {
@@ -807,18 +810,45 @@ void wavefront_backtrace_affine_m_only(
   while (v > 0 || h > 0) {
     if (in_mmatrix) {
       // Extend (find matches in the diagonal) backwards.
-      init_v = v;
-      init_h = h;
+      nmatches = 0;
 
-      const char* const pattern = wf_aligner->sequences.pattern;
-      const char* const text = wf_aligner->sequences.text;
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+      // Blocked backwards extend.
+      const uint64_t* pattern_blocks = (uint64_t*)(wf_aligner->sequences.pattern + v - 1);
+      const uint64_t* text_blocks = (uint64_t*)(wf_aligner->sequences.text + h - 1);
 
-      while (v > 0 && h > 0 && pattern[v - 1] == text[h - 1]) {
-        --v;
-        --h;
-        // If we come from ins or del, then this may be overwritten.
-        cigar->operations[(cigar->begin_offset)--] = 'M';
+      const uint64_t matches_lut = 0x4D4D4D4D4D4D4D4Dul; // Matches LUT = "MMMMMMMM"
+
+      char* operations = cigar->operations + cigar->begin_offset;
+
+      uint64_t cmp = *pattern_blocks ^ *text_blocks;
+      while (__builtin_expect(cmp==0,0)) {
+        nmatches += 8;
+        // Add matches to the cigar.
+        *((uint64_t*)(operations - nmatches + 1)) = matches_lut;
+        // Next blocks
+        --pattern_blocks;
+        --text_blocks;
+        // Compare
+        cmp = *pattern_blocks ^ *text_blocks;
       }
+#endif
+      // Char-wise backwards extend.
+      const char* pattern_ptr = wf_aligner->sequences.pattern + v - 1 - nmatches;
+      const char* text_ptr = wf_aligner->sequences.text + h - 1 - nmatches;
+
+      while (*pattern_ptr == *text_ptr) {
+        ++nmatches;
+        // If we come from ins or del, then this may be overwritten.
+        cigar->operations[cigar->begin_offset - nmatches + 1] = 'M';
+        // Next chars
+        --pattern_ptr;
+        --text_ptr;
+      }
+
+      cigar->begin_offset -= nmatches;
+      h -= nmatches;
+      v -= nmatches;
 
       // Here h and v might be zero, but we do not care, the loop will be exited
       // in the next iteration.
@@ -880,8 +910,8 @@ void wavefront_backtrace_affine_m_only(
         wf_aligner->wf_components.mwavefronts[indel1] : NULL;
 
       // I1 and D1 paths.
-      if (backtrace_ins_m_only(cigar, mwavefront1, k_ins, v, init_v, &v, &h) ||
-          backtrace_del_m_only(cigar, mwavefront1, k_del, h, init_h, &v, &h)) {
+      if (backtrace_ins_m_only(cigar, mwavefront1, k_ins, v, v + nmatches, &v, &h) ||
+          backtrace_del_m_only(cigar, mwavefront1, k_del, h, h + nmatches, &v, &h)) {
         score = indel1;
         in_mmatrix = true;
         continue;
@@ -897,8 +927,8 @@ void wavefront_backtrace_affine_m_only(
         wf_aligner->wf_components.mwavefronts[indel2] : NULL;
 
       // I2 and D2 paths.
-      if (backtrace_ins_m_only(cigar, mwavefront2, k_ins, v, init_v, &v, &h) ||
-          backtrace_del_m_only(cigar, mwavefront2, k_del, h, init_h, &v, &h)) {
+      if (backtrace_ins_m_only(cigar, mwavefront2, k_ins, v, v + nmatches, &v, &h) ||
+          backtrace_del_m_only(cigar, mwavefront2, k_del, h, h + nmatches, &v, &h)) {
         score = indel2;
         in_mmatrix = true;
         continue;
@@ -918,7 +948,7 @@ void wavefront_backtrace_affine_m_only(
   ++(cigar->begin_offset);
   cigar->score = alignment_score;
 
-#if 1
+#if 0
   const bool ok = check_cigar_backtrace_affine_m_only(penalties,
                                                       cigar,
                                                       sequences,
