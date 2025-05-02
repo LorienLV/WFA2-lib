@@ -944,6 +944,35 @@ void wavefront_backtrace_affine_m_only(
     exit(-1);
   }
 
+  // Dirty way of freeing the slabs used by I1, I2, D1 and D2.
+  // TODO: This should be done in a better way.
+  for (int i = 0; i <= alignment_score; ++i) {
+    if (distance_metric == gap_affine) {
+      if (wf_aligner->wf_components.i1wavefronts[i]) {
+        wf_aligner->wavefront_slab->memory_used -= wavefront_get_size(wf_aligner->wf_components.i1wavefronts[i]);
+        wavefront_free(wf_aligner->wf_components.i1wavefronts[i],wf_aligner->wavefront_slab->mm_allocator);
+        wf_aligner->wf_components.i1wavefronts[i]->status = wavefront_status_deallocated;
+      }
+      if (wf_aligner->wf_components.d1wavefronts[i]) {
+        wf_aligner->wavefront_slab->memory_used -= wavefront_get_size(wf_aligner->wf_components.d1wavefronts[i]);
+        wavefront_free(wf_aligner->wf_components.d1wavefronts[i],wf_aligner->wavefront_slab->mm_allocator);
+        wf_aligner->wf_components.d1wavefronts[i]->status = wavefront_status_deallocated;
+      }
+    }
+    if (distance_metric == gap_affine_2p) {
+      if (wf_aligner->wf_components.i2wavefronts[i]) {
+        wf_aligner->wavefront_slab->memory_used -= wavefront_get_size(wf_aligner->wf_components.i2wavefronts[i]);
+        wavefront_free(wf_aligner->wf_components.i2wavefronts[i],wf_aligner->wavefront_slab->mm_allocator);
+        wf_aligner->wf_components.i2wavefronts[i]->status = wavefront_status_deallocated;
+      }
+      if (wf_aligner->wf_components.d2wavefronts[i]) {
+        wf_aligner->wavefront_slab->memory_used -= wavefront_get_size(wf_aligner->wf_components.d2wavefronts[i]);
+        wavefront_free(wf_aligner->wf_components.d2wavefronts[i],wf_aligner->wavefront_slab->mm_allocator);
+        wf_aligner->wf_components.d2wavefronts[i]->status = wavefront_status_deallocated;
+      }
+    }
+  }
+
   // Set CIGAR
   ++(cigar->begin_offset);
   cigar->score = alignment_score;
