@@ -830,7 +830,7 @@ void wavefront_backtrace_affine_m_only(
 
         const int nmatches = offset - mwavefront1->offsets[k_del];
         wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', insertions_lut, l);
+        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', deletions_lut, l);
 
         k = k_del;
         offset = mwavefront1->offsets[k_del];
@@ -874,7 +874,7 @@ void wavefront_backtrace_affine_m_only(
 
         const int nmatches = offset - mwavefront2->offsets[k_del];
         wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', insertions_lut, l);
+        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', deletions_lut, l);
 
         k = k_del;
         offset = mwavefront2->offsets[k_del];
