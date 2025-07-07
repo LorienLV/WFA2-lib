@@ -195,6 +195,7 @@ void wavefront_unialign_terminate(
               score,alignment_end_k,alignment_end_offset);
         } else {
           wavefront_backtrace_affine_m_only(wf_aligner,
+              wf_aligner->component_begin,wf_aligner->component_end,
               score,alignment_end_k,alignment_end_offset);
           // wavefront_backtrace_affine(wf_aligner,
           //     wf_aligner->component_begin,wf_aligner->component_end,

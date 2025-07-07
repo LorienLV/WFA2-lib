@@ -662,6 +662,8 @@ check_cigar_backtrace_affine_m_only(const wavefront_penalties_t* const penalties
  * small scope).
  *
  * @param wf_aligner The wavefront aligner.
+ * @param component_begin unused.
+ * @param component_end The component (matrix) where the backtracking starts.
  * @param alignment_score The score of the alignment.
  * @param alignment_k The diagonal that contains the cell (N, M), where the
  * backtracking starts.
@@ -670,6 +672,8 @@ check_cigar_backtrace_affine_m_only(const wavefront_penalties_t* const penalties
  */
 void wavefront_backtrace_affine_m_only(
     wavefront_aligner_t* const wf_aligner,
+    const affine2p_matrix_type component_begin,
+    const affine2p_matrix_type component_end,
     const int alignment_score,
     const int alignment_k,
     const wf_offset_t alignment_offset) {
@@ -680,36 +684,44 @@ void wavefront_backtrace_affine_m_only(
   const int text_length = sequences->text_length;
   const wavefront_penalties_t* const penalties = &wf_aligner->penalties;
   const distance_metric_t distance_metric = penalties->distance_metric;
+
   // TODO: Do this elsewhere.
   // We need padding in order to perform the backwards extend.
   sequences->pattern[-1] = '!';
   sequences->text[-1] = '?';
+
   // Prepare cigar
   cigar_t* const cigar = wf_aligner->cigar;
   cigar_clear(cigar);
   cigar->end_offset = cigar->max_operations - 1;
   cigar->begin_offset = cigar->max_operations - 2;
+  // TODO: If the cigar has leading padding, then we can always add operations
+  // as LUTs. This may save some cycles.
   cigar->operations[cigar->end_offset] = '\0';
 
-  bool in_mmatrix = true; // In this function, we always start in the M matrix.
-
+  // Compute starting location
+  affine2p_matrix_type matrix_type = component_end;
   int score = alignment_score;
   int k = alignment_k;
-  wf_offset_t offset = alignment_offset;
-  wf_offset_t offset_orig = alignment_offset;
-  int l = 0; // Length of the current chain of insertions or deletions.
-
-  // Account for ending insertions/deletions
   int h = WAVEFRONT_H(alignment_k,alignment_offset);
   int v = WAVEFRONT_V(alignment_k,alignment_offset);
-  if (v < pattern_length) {
-    int i = pattern_length - v;
-    while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'D'; --i;};
+  wf_offset_t offset = alignment_offset;
+  wf_offset_t offset_orig = offset;
+
+  // Account for ending insertions/deletions
+  if (component_end == affine2p_matrix_M) { // ends-free
+    if (v < pattern_length) {
+      int i = pattern_length - v;
+      while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'D'; --i;};
+    }
+    if (h < text_length) {
+      int i = text_length - h;
+      while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'I'; --i;};
+    }
   }
-  if (h < text_length) {
-    int i = text_length - h;
-    while (i > 0) {cigar->operations[(cigar->begin_offset)--] = 'I'; --i;};
-  }
+
+  bool in_mmatrix = component_end == affine2p_matrix_M;
+  int l = 0; // Length of the current chain of insertions or deletions.
 
   // Trace the alignment back
   while (score != 0) {
@@ -717,35 +729,43 @@ void wavefront_backtrace_affine_m_only(
       v = WAVEFRONT_V(k, offset);
       h = WAVEFRONT_H(k, offset);
 
+      wf_offset_t nmatches = 0;
+
       // TODO: Is there a function to backwards extend somewhere?
 #if __BYTE_ORDER == __LITTLE_ENDIAN
       // Blocked backwards extend.
-      const uint64_t* pattern_blocks = (uint64_t*)(wf_aligner->sequences.pattern + v - 1);
-      const uint64_t* text_blocks = (uint64_t*)(wf_aligner->sequences.text + h - 1);
-
-      int nmatches = 0;
+      const uint64_t* pattern_blocks = (uint64_t*)(wf_aligner->sequences.pattern + v - 8);
+      const uint64_t* text_blocks = (uint64_t*)(wf_aligner->sequences.text + h - 8);
 
       uint64_t cmp = *pattern_blocks ^ *text_blocks;
       while (__builtin_expect(cmp==0,0)) {
         // Next blocks
         --pattern_blocks;
         --text_blocks;
-        ++nmatches;
+
+        nmatches += 8;
+
         // Compare
         cmp = *pattern_blocks ^ *text_blocks;
       }
-#endif
 
+      const int equal_left_bits = __builtin_clzl(cmp);
+      const int equal_chars = DIV_FLOOR(equal_left_bits, 8);
+
+      nmatches += equal_chars;
+#else
       // Char-wise backwards extend.
-      const char* pattern_ptr = wf_aligner->sequences.pattern + v - 1 - nmatches;
-      const char* text_ptr = wf_aligner->sequences.text + h - 1 - nmatches;
+      const char* pattern_ptr = wf_aligner->sequences.pattern + v - 1;
+      const char* text_ptr = wf_aligner->sequences.text + h - 1;
 
       while (*pattern_ptr == *text_ptr) {
         // Next chars
         --pattern_ptr;
         --text_ptr;
+
         ++nmatches;
       }
+#endif
 
       const int mismatch = score - penalties->mismatch;
       const wavefront_t* const mwavefront = (mismatch >= 0) ?
@@ -774,9 +794,8 @@ void wavefront_backtrace_affine_m_only(
         // In WFA, for a given diagonal and score, we only store the furthest
         // reaching offset. We do not know which was the offset prior to
         // extending it. To account for that, we must allow the indel to come
-        // at any point between the offset previos performing the backwards
-        // extension and the current offset. We store the range of allowed v
-        // and h coordinates.
+        // at any point between the offset previous performing the backwards
+        // extension and the current offset.
         //
         // Example, in the following DP table, where there is a chain of 3
         // matches an insertion can come from any of the positions marked with
