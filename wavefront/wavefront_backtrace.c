@@ -64,7 +64,7 @@ static const uint64_t insertions_lut = 0x4949494949494949ul; // Insertions LUT =
 static const uint64_t deletions_lut = 0x4444444444444444ul; // Deletions LUT = "DDDDDDDD"
 
 /**
- * Add @p num operations of type @p op to the CIGAR. blocked_op represents the
+ * Add @p num operations of type @p op to the CIGAR. @p lut_op represents the
  * 64-bit representation of the operation (8 times the same operation). This is
  * used when @p num is greater than or equal to 8, in which case the operation
  * is added in blocks of 8 operations to the CIGAR.
@@ -72,13 +72,13 @@ static const uint64_t deletions_lut = 0x4444444444444444ul; // Deletions LUT = "
  * @param cigar The CIGAR.
  * @param op The character representing the operation to add (e.g., 'M', 'X',
  * 'I', 'D').
- * @param blocked_op The 64-bit representation of @p op, i.e., the same operation
+ * @param lut_op The 64-bit representation of @p op, i.e., the same operation
  * repeated 8 times (e.g., 0x4D4D4D4D4D4D4D4Dul for 'M').
  * @param num The number of instances of the operation to add to the CIGAR.
  */
 void wavefront_backtrace_add_nop_to_cigar(cigar_t *const cigar,
                                           const char op,
-                                          const uint64_t blocked_op,
+                                          const uint64_t lut_op,
                                           int num) {
   char* operations = cigar->operations + cigar->begin_offset;
   // Update offset first
@@ -86,13 +86,40 @@ void wavefront_backtrace_add_nop_to_cigar(cigar_t *const cigar,
   // Blocks of 8-operations
   while (num >= 8) {
     operations -= 8;
-    *((uint64_t*)(operations+1)) = blocked_op;
+    *((uint64_t*)(operations+1)) = lut_op;
     num -= 8;
   }
   // Remaining operations
   for (int i = 0; i < num; ++i) {
     *operations = op;
     --operations;
+  }
+}
+
+/**
+ * Add @p num operations of type @p lut_op (8 repetitions of a character) to the
+ * CIGAR. If @p num is not multiple of 8, then @p num + (8 - (num % 8))
+ * operations will be added to the CIGAR, but the begin_offset will be updated
+ * using @p num. In order to do this, the cigar needs a padding of at least 7
+ * elements.
+ *
+ * @param cigar The CIGAR.
+ * @param lut_op The 64-bit representation of an operation, i.e., the same
+ * operation repeated 8 times (e.g., 0x4D4D4D4D4D4D4D4Dul for 'M').
+ * @param num The number of instances of the operation to add to the CIGAR.
+ */
+void wavefront_backtrace_add_lut_to_cigar(cigar_t *const cigar,
+                                          const uint64_t lut_op,
+                                          int num) {
+  uint64_t* operations = (uint64_t*)(cigar->operations + cigar->begin_offset + 1);
+  // Update offset first
+  cigar->begin_offset -= num;
+  // Blocks of 8-operations. We may add more than num operations if num is
+  // not a multiple of 8. We need enough space for this.
+  while (num > 0) {
+    --operations;
+    *operations = lut_op;
+    num -= 8;
   }
 }
 
@@ -691,6 +718,7 @@ void wavefront_backtrace_affine_m_only(
   sequences->text[-1] = '?';
 
   // Prepare cigar
+  // TODO: WARNING: We want padding in the cigar so we can always use LUTs.
   cigar_t* const cigar = wf_aligner->cigar;
   cigar_clear(cigar);
   cigar->end_offset = cigar->max_operations - 1;
@@ -729,7 +757,7 @@ void wavefront_backtrace_affine_m_only(
       v = WAVEFRONT_V(k, offset);
       h = WAVEFRONT_H(k, offset);
 
-      wf_offset_t nmatches = 0;
+      int nmatches = 0;
 
       // TODO: Is there a function to backwards extend somewhere?
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -784,7 +812,7 @@ void wavefront_backtrace_affine_m_only(
 
         score = mismatch;
 
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
+        wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, nmatches);
         cigar->operations[(cigar->begin_offset)--] = 'X';
       }
       else {
@@ -831,31 +859,38 @@ void wavefront_backtrace_affine_m_only(
           mwavefront1->offsets[k_ins] + l <= offset) {
 
         const int nmatches = offset - (mwavefront1->offsets[k_ins] + l);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'I', insertions_lut, l);
+
+        wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, nmatches);
+        wavefront_backtrace_add_lut_to_cigar(cigar, insertions_lut, l);
 
         k = k_ins;
         offset = mwavefront1->offsets[k_ins];
         score = indel1;
 
         in_mmatrix = true;
+
+        continue;
       }
+
       // D1 path.
-      else if (mwavefront1 != NULL &&
-               mwavefront1->lo <= k_del &&
-               k_del <= mwavefront1->hi &&
-               mwavefront1->offsets[k_del] >= offset_orig &&
-               mwavefront1->offsets[k_del] <= offset) {
+      if (mwavefront1 != NULL &&
+          mwavefront1->lo <= k_del &&
+          k_del <= mwavefront1->hi &&
+          mwavefront1->offsets[k_del] >= offset_orig &&
+          mwavefront1->offsets[k_del] <= offset) {
 
         const int nmatches = offset - mwavefront1->offsets[k_del];
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', deletions_lut, l);
+
+        wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, nmatches);
+        wavefront_backtrace_add_lut_to_cigar(cigar, deletions_lut, l);
 
         k = k_del;
         offset = mwavefront1->offsets[k_del];
         score = indel1;
 
         in_mmatrix = true;
+
+        continue;
       }
 
       if (distance_metric != gap_affine_2p) {
@@ -875,31 +910,38 @@ void wavefront_backtrace_affine_m_only(
           mwavefront2->offsets[k_ins] + l <= offset) {
 
         const int nmatches = offset - (mwavefront2->offsets[k_ins] + l);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'I', insertions_lut, l);
+
+        wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, nmatches);
+        wavefront_backtrace_add_lut_to_cigar(cigar, insertions_lut, l);
 
         k = k_ins;
         offset = mwavefront2->offsets[k_ins];
         score = indel2;
 
         in_mmatrix = true;
+
+        continue;
       }
+
       // D2 path.
-      else if (mwavefront2 != NULL &&
-               mwavefront2->lo <= k_del &&
-               k_del <= mwavefront2->hi &&
-               mwavefront2->offsets[k_del] >= offset_orig &&
-               mwavefront2->offsets[k_del] <= offset) {
+      if (mwavefront2 != NULL &&
+          mwavefront2->lo <= k_del &&
+          k_del <= mwavefront2->hi &&
+          mwavefront2->offsets[k_del] >= offset_orig &&
+          mwavefront2->offsets[k_del] <= offset) {
 
         const int nmatches = offset - mwavefront2->offsets[k_del];
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, nmatches);
-        wavefront_backtrace_add_nop_to_cigar(cigar, 'D', deletions_lut, l);
+
+        wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, nmatches);
+        wavefront_backtrace_add_lut_to_cigar(cigar, deletions_lut, l);
 
         k = k_del;
         offset = mwavefront2->offsets[k_del];
         score = indel2;
 
         in_mmatrix = true;
+
+        continue;
       }
     }
   }
@@ -915,7 +957,7 @@ void wavefront_backtrace_affine_m_only(
     assert(penalties->gap_extension2 > 0);
   }
 
-  wavefront_backtrace_add_nop_to_cigar(cigar, 'M', matches_lut, offset);
+  wavefront_backtrace_add_lut_to_cigar(cigar, matches_lut, offset);
   offset = 0;
 
   // DEBUG
