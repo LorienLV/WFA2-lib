@@ -718,13 +718,11 @@ void wavefront_backtrace_affine_m_only(
   sequences->text[-1] = '?';
 
   // Prepare cigar
-  // TODO: WARNING: We want padding in the cigar so we can always use LUTs.
+  // WARNING: We want padding in the cigar so we can always use LUTs.
   cigar_t* const cigar = wf_aligner->cigar;
   cigar_clear(cigar);
   cigar->end_offset = cigar->max_operations - 1;
   cigar->begin_offset = cigar->max_operations - 2;
-  // TODO: If the cigar has leading padding, then we can always add operations
-  // as LUTs. This may save some cycles.
   cigar->operations[cigar->end_offset] = '\0';
 
   // Compute starting location
@@ -759,7 +757,7 @@ void wavefront_backtrace_affine_m_only(
 
       int nmatches = 0;
 
-      // TODO: Is there a function to backwards extend somewhere?
+      // TODO: Function to backwards extend?
 #if __BYTE_ORDER == __LITTLE_ENDIAN
       // Blocked backwards extend.
       const uint64_t* pattern_blocks = (uint64_t*)(wf_aligner->sequences.pattern + v - 8);
